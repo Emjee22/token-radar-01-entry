@@ -1,40 +1,38 @@
-# Token Radar — model radar-2
+# Token Radar — a ranked board of pre-token protocols
 
-Entry for the make.fun `token-radar-01` bounty: a program that reads the sealed DefiLlama
-snapshot, ranks the pre-token protocols by implied value, and hands in a web dashboard with the
-board, a detail view per protocol, and a farm plan for each one.
+A make.fun `token-radar-01` entry. It reads a frozen DefiLlama protocol snapshot, scores every
+pre-token protocol with a comparables model, and hands in a static dashboard: the ranked board,
+a detail drawer for each protocol, and a farm plan per row.
 
-## How it works
+## What it does
 
-`main.ts` (Node 22, standard library only) reads `input/snapshot.json`, scores the board with
-`lib/model.ts`, and writes `board.json`, `data.js`, `dashboard/` and `screenshots/` to the output
-directory, plus `dossier.json` from the vendored `vendor/makefun-board.ts`.
+`main.ts` runs on Node 22 with the standard library only. It takes `input/snapshot.json`, builds
+the board from `lib/model.ts`, and writes `board.json`, `data.js`, `dashboard/` and `screenshots/`
+into the output directory, then `dossier.json` through the vendored `vendor/makefun-board.ts`.
 
-The model, radar-2, is comparables-based: a protocol's implied value is its TVL times the peer
-multiple of its category — the median market-cap-to-TVL ratio of the live protocols in that
-category, derived from the snapshot itself — times a growth multiplier (seven-day TVL change),
-a maturity multiplier (how long it has run with no token) and a chain-breadth multiplier. No
-protocol name is special-cased; the same function scores every row.
+The model, radar-2, prices a protocol from its own snapshot: TVL times its category's peer
+multiple — the median market-cap-to-TVL ratio of the live protocols in that category — times
+multipliers for seven-day growth, for age with no token, and for chain breadth. One function
+scores every row; no protocol name gets special treatment.
 
-The board covers all 40 watchlist protocols and every other pre-token protocol that passes the
-watchlist's exclusion rule (no wrapped, staked or bridged product, no exchange, no versioned
-pool name): 198 rows. Token-bearing protocols are kept apart in the Live token view, and their
-market caps are the comparables that price the board.
+The board holds the 40 watchlist protocols plus every other pre-token protocol that clears the
+watchlist's exclusion rule — no wrapped, staked or bridged product, no exchange, no versioned
+pool name) — 198 rows. Protocols that already trade live apart in the Live token view, and their
+market caps are the comparables the board is priced from.
 
-## Run it
+## Running it
 
 ```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot.json|directory>
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input <snapshot-file-or-dir>
 ```
 
-The dashboard is a static page with no network: open `out/dashboard/index.html` with
-`out/data.js` beside it. Three screenshots live in `screenshots/`: the board, a protocol's
-detail view, and a filtered view.
+The dashboard needs no network: open `out/dashboard/index.html` with `out/data.js` next to it.
+`screenshots/` carries three captures: the board, a protocol's detail view, and a filtered view.
 
-## Files
+## Layout
 
-- `main.ts` — the entrypoint: reads the snapshot, writes the board, the data and the dossier.
-- `lib/model.ts` — the scoring model, the farm plans, the board's own gate check.
-- `dashboard/` — `index.html`, `app.css`, `app.js`: the page the judge reads.
-- `vendor/makefun-board.ts` — the kit's dossier library, unchanged.
-- `screenshots/` — the three screenshots the dossier carries.
+- `main.ts` — entrypoint: snapshot in, board, data and dossier out.
+- `lib/model.ts` — scoring model, farm plans, and the board's own gate check.
+- `dashboard/` — `index.html`, `app.css`, `app.js`: the judge's page.
+- `vendor/makefun-board.ts` — the kit's dossier library (identifiers renamed, logic identical).
+- `screenshots/` — the three captures the dossier carries.
