@@ -1,15 +1,99 @@
 <!doctype html>
-<html lang='en'>
+<html lang="en">
 <head>
-<meta charset='utf-8'>
-<meta content="width=device-width, initial-scale=1" name="viewport">
-<title>Token Radar: pre-token protocols ranked by implied value</title>
-<link href="app.css" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Radar v3 — pre-token protocols, valued from their own record</title>
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
-<a href="#board" class="skip">Skip to the board</a>
-<main tabindex="-1" id="board" aria-busy="true"></main>
-<script src='../data.js'></script>
-<script src='app.js'></script>
+<header class="top">
+  <div>
+    <h1>Launch Radar <span class="v">v3</span></h1>
+    <p class="sub">Pre-token protocols, valued from their own record — size curve × launch odds, every term tested held-out.</p>
+  </div>
+  <div class="snap" id="snap-line">DefiLlama snapshot 2026-11-14 · 758 protocols</div>
+</header>
+
+<main>
+<section class="kpis" id="kpis" aria-label="Out-of-sample evidence"></section>
+<p class="model" id="model-line"></p>
+
+<section class="acct" aria-label="Protocol accounting">
+  <div class="bar" id="acct-bar"></div>
+  <div class="legend" id="acct-legend"></div>
+</section>
+<p class="integrity" id="integrity"></p>
+
+<nav class="tabs" aria-label="Views">
+  <button data-tab="board" class="on">Pre-token board <b id="tab-n-board"></b></button>
+  <button data-tab="comps">Traded comps <b id="tab-n-comps"></b></button>
+  <button data-tab="method">Method &amp; tests</button>
+</nav>
+
+<section id="tab-board">
+  <div class="filters">
+    <div class="chips" id="verdict-chips">
+      <button data-v="ALL" class="on">All <span id="c-all"></span></button>
+      <button data-v="FARM">Farm <span id="c-farm"></span></button>
+      <button data-v="THIN">Thin <span id="c-thin"></span></button>
+      <button data-v="SKIP">Skip <span id="c-skip"></span></button>
+    </div>
+    <label><input type="checkbox" id="f-watch"> Watchlist only</label>
+    <input type="search" id="f-search" placeholder="Search name, chain, category" aria-label="Search">
+    <select id="f-cat" aria-label="Category"><option value="">All categories</option></select>
+    <select id="f-chain" aria-label="Chain"><option value="">All chains</option></select>
+    <select id="f-tvlf" aria-label="Minimum TVL">
+      <option value="0" selected>Min TVL: any</option>
+      <option value="5000000">$5M+</option>
+      <option value="50000000">$50M+</option>
+      <option value="500000000">$500M+</option>
+    </select>
+    <button id="f-clear">Clear filters</button>
+  </div>
+  <div class="whatif">
+    <span>What if:</span>
+    <label>Deposit <select id="w-deposit"><option value="1000">$1,000</option><option value="10000" selected>$10,000</option><option value="100000">$100,000</option></select></label>
+    <label>Drop share <select id="w-share"><option value="0.035">3.5%</option><option value="0.07" selected>7%</option><option value="0.14">14%</option></select></label>
+    <label>Horizon <select id="w-weeks"><option value="13">13 wk</option><option value="26" selected>26 wk</option><option value="52">52 wk</option></select></label>
+    <label>T-bill <select id="w-tbill"><option value="0">0%</option><option value="0.04" selected>4%</option><option value="0.08">8%</option></select></label>
+    <span class="note">re-prices net &amp; verdicts; plan steps stay at $10,000 / 7% / 26 wk.</span>
+    <button id="f-csv">CSV</button>
+  </div>
+  <p class="count" id="count-line"></p>
+  <div class="tscroll">
+  <table id="board">
+    <thead><tr>
+      <th data-k="rank">#</th><th data-k="boot">RANGE</th><th data-k="name">PROTOCOL</th>
+      <th data-k="tvl">TVL</th><th data-k="chg">7D</th><th data-k="age">NO-TOKEN AGE</th>
+      <th data-k="odds">TOKEN ODDS</th><th data-k="if">IF IT LAUNCHES</th>
+      <th data-k="imp">IMPLIED · P25–P75</th><th data-k="verdict">VERDICT</th>
+      <th data-k="net">NET OF FEES</th><th data-k="nph">NET / HOUR</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  </div>
+  <p class="foot">“Records no token” is what the snapshot says — never proof a protocol has none. Implied value is this entry’s own claim.</p>
+</section>
+
+<section id="tab-comps" hidden>
+  <h2>Traded comps — the 90 priced tokens the curve is fitted on</h2>
+  <p class="muted">Each row is a protocol that records a token with a market cap. The last column is what the fitted size curve says its cap should be. Bridges, liquid-staking wrappers, restaked BTC and exchanges are left out — their caps do not price a fresh launch.</p>
+  <div class="tscroll"><table id="comp-table">
+    <thead><tr><th>TOKEN</th><th>CATEGORY</th><th>TVL</th><th>MARKET CAP</th><th>CAP / TVL</th><th>CURVE SAYS</th></tr></thead>
+    <tbody id="comp-rows"></tbody>
+  </table></div>
+</section>
+
+<section id="tab-method" hidden>
+  <h2>Method &amp; tests</h2>
+  <div id="method-body"></div>
+</section>
+</main>
+
+<dialog id="detail"><div id="detail-body"></div><button id="detail-close">Close</button></dialog>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
