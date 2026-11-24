@@ -1,4 +1,4 @@
-// Token Radar v3 — entrypoint.
+// Token Radar v3.1 — entrypoint.
 //
 // Reads the sealed snapshot, fits the model (lib/model.ts), writes the
 // ranked board, the dashboard's data, copies the dashboard and the
@@ -97,6 +97,13 @@ function main(): void {
       cats.push(k);
     }
   }
+  // Row array: [slug, name, catIdx, chainIdx, tvl, chg7d, age, odds, implied,
+  //   bootLo, bootHi, tier, ifLaunches, watchlist]. The plan fee is NOT stored
+  // per row: the dashboard recomputes it exactly from the tier (2.21 + 13 x
+  // tx), the same arithmetic main.ts uses for board.json. Neither are P25/P75:
+  // the dashboard recomputes them from implied x the printed band (x0.283–
+  // x3.613); they match board.json to within $5,500 and display identically
+  // at the $0.1M rounding the board shows.
   const rowArrays = radar.rows.map((r) => [
     r.slug,
     r.name,
@@ -107,13 +114,10 @@ function main(): void {
     r.age_years === null ? null : round(r.age_years, 1),
     round(r.odds, 3),
     r.implied_value_usd,
-    round(r.fee_usd, 2),
     r.boot_lo,
     r.boot_hi,
     r.gas_tier,
     r.if_launches_usd,
-    r.p25_usd,
-    r.p75_usd,
     r.watchlist ? 1 : 0,
   ]);
   const data = {
@@ -123,8 +127,10 @@ function main(): void {
     model: {
       size_a: round(radar.evidence.size_a, 3),
       size_b: round(radar.evidence.size_b, 3),
-      odds_a: round(radar.evidence.odds_a, 3),
-      odds_b: round(radar.evidence.odds_b, 3),
+      odds_k: round(radar.evidence.odds_k, 3),
+      odds_lambda: round(radar.evidence.odds_lambda, 3),
+      odds_horizon: radar.evidence.odds_horizon,
+      odds_unknown: round(radar.evidence.odds_unknown, 3),
       band_lo: round(radar.evidence.band_lo, 3),
       band_hi: round(radar.evidence.band_hi, 3),
       band10: round(radar.evidence.band10, 3),
@@ -142,6 +148,8 @@ function main(): void {
       range_honesty: round(radar.evidence.range_honesty, 3),
       odds_five_fold: round(radar.evidence.odds_five_fold, 3),
       odds_walk: round(radar.evidence.odds_walk, 3),
+      odds_logit_five_fold: round(radar.evidence.odds_logit_five_fold, 3),
+      odds_logit_walk: round(radar.evidence.odds_logit_walk, 3),
       odds_base_five_fold: round(radar.evidence.odds_base_five_fold, 3),
       odds_base_walk: round(radar.evidence.odds_base_walk, 3),
       flat_multiple: round(radar.evidence.flat_multiple, 3),
@@ -187,11 +195,11 @@ function main(): void {
   writeFileSync(join(outDir, 'dossier.json'), dossier);
 
   const total = radar.evidence.total_implied;
-  console.log(`token-radar v3: ${radar.rows.length} rows, watchlist ${radar.accounting.watchlist}/40`);
+  console.log(`token-radar v3.1: ${radar.rows.length} rows, watchlist ${radar.accounting.watchlist}/40`);
   console.log(`top-1 ${radar.rows[0]!.name} $${radar.rows[0]!.implied_value_usd.toLocaleString('en-US')}, total $${total.toLocaleString('en-US')}`);
   console.log(`size curve ln cap = ${radar.evidence.size_a.toFixed(3)} + ${radar.evidence.size_b.toFixed(3)} ln TVL (${radar.evidence.comps} comps)`);
   console.log(`held-out miss LOO x${radar.evidence.size_loo.toFixed(2)} (flat x${radar.evidence.flat_loo.toFixed(2)}), walk-forward x${radar.evidence.size_walk.toFixed(2)} (flat x${radar.evidence.flat_walk.toFixed(2)})`);
-  console.log(`odds Brier 5-fold ${radar.evidence.odds_five_fold.toFixed(3)} vs base ${radar.evidence.odds_base_five_fold.toFixed(3)}, walk-forward ${radar.evidence.odds_walk.toFixed(3)} vs base ${radar.evidence.odds_base_walk.toFixed(3)}`);
+  console.log(`odds Weibull k=${radar.evidence.odds_k.toFixed(3)} lambda=${radar.evidence.odds_lambda.toFixed(3)}, 24-mo forward; CDF Brier 5-fold ${radar.evidence.odds_five_fold.toFixed(3)} vs base ${radar.evidence.odds_base_five_fold.toFixed(3)}, walk-forward ${radar.evidence.odds_walk.toFixed(3)} vs base ${radar.evidence.odds_base_walk.toFixed(3)} (logit ${radar.evidence.odds_logit_five_fold.toFixed(3)} / ${radar.evidence.odds_logit_walk.toFixed(3)})`);
   console.log(`range honesty ${(radar.evidence.range_honesty * 100).toFixed(0)}%, farm ${radar.evidence.farm_count} / thin ${radar.evidence.thin_count} / skip ${radar.evidence.skip_count}`);
   console.log(`board checksum ${boardChecksum.slice(0, 8)}, dossier ${dossier.length} bytes`);
 }

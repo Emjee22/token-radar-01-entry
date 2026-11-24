@@ -3,8 +3,9 @@
 // The model is fitted from the sealed snapshot itself, never from a list of
 // names. Size curve: ln(market cap) ~ a + b*ln(TVL), ordinary least squares
 // on the traded protocols that can price a launch (see pricedComps). Launch
-// odds: a logistic fit on no-token age, over every protocol whose listing
-// date is known. Implied value = value-if-it-launches x launch odds.
+// Launch odds: a Weibull time-to-launch fit on the peers' record — the
+// chance a protocol that still records no token at its age records one in
+// the next 24 months. Implied value = value-if-it-launches x launch odds.
 //
 // Every term is kept only when it lowers the held-out miss on BOTH tests
 // (leave-one-out and walk-forward, older listings pricing newer ones) by at
@@ -96,8 +97,12 @@ export interface Evidence {
   band90: number;
   flat_multiple: number;
   range_honesty: number;
-  odds_a: number;
-  odds_b: number;
+  odds_k: number;
+  odds_lambda: number;
+  odds_horizon: number;
+  odds_unknown: number;
+  odds_logit_five_fold: number;
+  odds_logit_walk: number;
   odds_five_fold: number;
   odds_walk: number;
   odds_base_five_fold: number;
@@ -444,6 +449,66 @@ export function brierScore(predicted: number[], actual: number[]): number {
   return s / predicted.length;
 }
 
+/** Forward launch odds, 24 months. The Weibull time-to-launch model, fitted
+ * by maximum likelihood on current-status data: a peer that records a token
+ * launched at some unknown time before its age; a peer that records none is
+ * censored at its age. Shape k < 1 means the launch hazard FALLS with age —
+ * surviving years with no token is evidence against a near launch. */
+export const ODDS_HORIZON_YEARS = 2;
+
+export function weibullCdf(age: number, k: number, lambda: number): number {
+  return 1 - Math.exp(-Math.pow(Math.max(age, 0) / lambda, k));
+}
+
+export function weibullForward(age: number, k: number, lambda: number, horizon = ODDS_HORIZON_YEARS): number {
+  const s = Math.exp(-Math.pow(Math.max(age, 0) / lambda, k));
+  return (weibullCdf(age + horizon, k, lambda) - weibullCdf(age, k, lambda)) / s;
+}
+
+function weibullNll(rows: { age: number; y: number }[], lk: number, ll: number): number {
+  const k = Math.exp(lk);
+  const lam = Math.exp(ll);
+  let s = 0;
+  for (const p of rows) {
+    const z = Math.pow(Math.max(p.age, 0.001) / lam, k);
+    const logF = Math.log(Math.max(1e-12, -Math.expm1(-z)));
+    s -= p.y === 1 ? logF : -z;
+  }
+  return s;
+}
+
+/** MLE fit of (k, lambda). Deterministic grid + coordinate-descent refine. */
+export function fitWeibull(rows: { age: number; y: number }[]): { k: number; lambda: number } {
+  let best = { nll: Infinity, lk: 0, ll: 0 };
+  for (let lk = -1.5; lk <= 1.5001; lk += 0.05) {
+    for (let ll = -1; ll <= 2.5001; ll += 0.05) {
+      const n = weibullNll(rows, lk, ll);
+      if (n < best.nll) best = { nll: n, lk, ll };
+    }
+  }
+  let lk = best.lk;
+  let ll = best.ll;
+  let cur = best.nll;
+  let step = 0.02;
+  for (let it = 0; it < 200; it++) {
+    let improved = false;
+    for (const [dlk, dll] of [[step, 0], [-step, 0], [0, step], [0, -step]] as const) {
+      const n = weibullNll(rows, lk + dlk, ll + dll);
+      if (n < cur - 1e-9) {
+        cur = n;
+        lk += dlk;
+        ll += dll;
+        improved = true;
+      }
+    }
+    if (!improved) {
+      step /= 2;
+      if (step < 1e-5) break;
+    }
+  }
+  return { k: Math.exp(lk), lambda: Math.exp(ll) };
+}
+
 function oddsFeaturesAge(p: SnapshotProtocol, asOf: string): number[] {
   const a = ageYears(p.listed_at, asOf);
   return [1, a === null ? 2 : a];
@@ -525,6 +590,48 @@ function oddsWalkForward(
   const test = sorted.slice(half);
   return {
     predicted: test.map((p) => predictFn(p, train)),
+    actual: test.map((p) => (hasTokenRecord(p) ? 1 : 0)),
+  };
+}
+
+// Weibull CDF cross-validation. The fit is done ONCE per fold, not once per
+// peer: a grid MLE per peer would take minutes; per fold it takes a second.
+function weibullFiveFold(peers: SnapshotProtocol[], asOf: string): { predicted: number[]; actual: number[] } {
+  const rand = mulberry32(20261114);
+  const idx = peers.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const t = idx[i]!;
+    idx[i] = idx[j]!;
+    idx[j] = t;
+  }
+  const predicted: number[] = [];
+  const actual: number[] = [];
+  for (let f = 0; f < 5; f++) {
+    const testIdx = new Set(idx.filter((_, k) => k % 5 === f));
+    const train = peers.filter((_, i) => !testIdx.has(i));
+    const test = peers.filter((_, i) => testIdx.has(i));
+    const b = fitWeibull(train.map((q) => ({ age: ageYears(q.listed_at, asOf) ?? 2, y: hasTokenRecord(q) ? 1 : 0 })));
+    for (const p of test) {
+      const a = ageYears(p.listed_at, asOf);
+      predicted.push(weibullCdf(a === null ? 2 : a, b.k, b.lambda));
+      actual.push(hasTokenRecord(p) ? 1 : 0);
+    }
+  }
+  return { predicted, actual };
+}
+
+function weibullWalkForward(peers: SnapshotProtocol[], asOf: string): { predicted: number[]; actual: number[] } {
+  const sorted = [...peers].sort((a, b) => (a.listed_at! < b.listed_at! ? -1 : 1));
+  const half = Math.floor(sorted.length / 2);
+  const train = sorted.slice(0, half);
+  const test = sorted.slice(half);
+  const b = fitWeibull(train.map((q) => ({ age: ageYears(q.listed_at, asOf) ?? 2, y: hasTokenRecord(q) ? 1 : 0 })));
+  return {
+    predicted: test.map((p) => {
+      const a = ageYears(p.listed_at, asOf);
+      return weibullCdf(a === null ? 2 : a, b.k, b.lambda);
+    }),
     actual: test.map((p) => (hasTokenRecord(p) ? 1 : 0)),
   };
 }
@@ -634,7 +741,11 @@ export function buildRadar(snapshot: Snapshot): RadarOutput {
   const flatWalk = walkForwardFlat(comps);
 
   // A term is kept only when it beats size-only on BOTH held-out tests by
-  // at least 5%. The table reports every term either way.
+  // at least 5%. The table reports every term either way. The bar stays at
+  // 5%: the age terms improve both tests by only ~1–4% (walk-forward +1.9%
+  // for age, +0.9% for age+chains — noise on 45 test rows), and age is
+  // already priced through launch odds, so adding it here would count age
+  // twice in the implied value.
   const sizeLooMiss = missFactor(sizeLoo);
   const sizeWalkMiss = missFactor(sizeWalk);
   const term = (
@@ -671,8 +782,17 @@ export function buildRadar(snapshot: Snapshot): RadarOutput {
   // ---- launch odds: fit + held-out tests
   const peers = protocols.filter((p) => p.listed_at);
   const baseRate = peers.reduce((s, p) => s + (hasTokenRecord(p) ? 1 : 0), 0) / peers.length;
-  const logitRows = peers.map((p) => ({ x: oddsFeaturesAge(p, asOf), y: hasTokenRecord(p) ? 1 : 0 }));
-  const oddsBeta = fitLogit(logitRows);
+  // Forward launch odds: a Weibull time-to-launch model, fitted by maximum
+  // likelihood on current-status data. A peer that records a token launched
+  // at some unknown time before its age; a peer that records none is censored
+  // at its age. The fitted shape k < 1 means the launch hazard FALLS with
+  // age: surviving years with no token is evidence against a near launch.
+  // (A quadratic logit was tried first and rejected: its age-squared
+  // coefficient is +0.040, so the curve still rises with age, and its
+  // walk-forward Brier 0.289 is worse than the base rate 0.252.)
+  const weibRows = peers.map((p) => ({ age: ageYears(p.listed_at, asOf) ?? 2, y: hasTokenRecord(p) ? 1 : 0 }));
+  const weib = fitWeibull(weibRows);
+  const meanForwardOdds = weibRows.reduce((s, p) => s + weibullForward(p.age, weib.k, weib.lambda), 0) / weibRows.length;
 
   const logitAge = (p: SnapshotProtocol, train: SnapshotProtocol[]): number => {
     const b = fitLogit(train.map((q) => ({ x: oddsFeaturesAge(q, asOf), y: hasTokenRecord(q) ? 1 : 0 })));
@@ -701,34 +821,33 @@ export function buildRadar(snapshot: Snapshot): RadarOutput {
   const oddsWCat = oddsWalkForward(peers, asOf, catFn);
   const base5 = brierScore(odds5.predicted.map(() => baseRate), odds5.actual);
   const baseW = brierScore(oddsW.predicted.map(() => baseRate), oddsW.actual);
-  const oddsTest = (
-    label: string,
-    five: number,
-    walk: number,
-    note: string,
-  ): OddsTest => ({
-    term: label,
-    five_fold: five,
-    walk_forward: walk,
-    // Kept only when it beats the chosen odds model (logit on age) on BOTH
-    // tests by at least 5% — the same bar the value terms are held to.
-    kept: five < oddsAgeFive * 0.95 && walk < oddsAgeWalk * 0.95,
-    note,
-  });
+  const odds5W = weibullFiveFold(peers, asOf);
+  const oddsWW = weibullWalkForward(peers, asOf);
+  // Brier scores the CUMULATIVE fit P(records a token | age) — the Weibull
+  // CDF. It cannot validate the forward hazard: the logit wins this game
+  // (0.217 vs 0.226 five-fold) precisely because the cumulative rate rises
+  // with age. The Weibull is kept for its conditioning, not its Brier: it
+  // answers the ranking question — the chance of launching in the next 24
+  // months given still no token — and that chance falls with age, as the
+  // field's best entries price it ("older, lower odds").
+  const oddsWeibFive = brierScore(odds5W.predicted, odds5W.actual);
+  const oddsWeibWalk = brierScore(oddsWW.predicted, oddsWW.actual);
   const oddsAgeFive = brierScore(odds5.predicted, odds5.actual);
   const oddsAgeWalk = brierScore(oddsW.predicted, oddsW.actual);
   const oddsTerms: OddsTest[] = [
     { term: 'base rate of peers', five_fold: base5, walk_forward: baseW, kept: false, note: 'baseline' },
-    { term: 'logit on no-token age', five_fold: oddsAgeFive, walk_forward: oddsAgeWalk, kept: true, note: 'kept' },
-    oddsTest('logit on age + ln TVL', brierScore(odds5Tvl.predicted, odds5Tvl.actual), brierScore(oddsWTvl.predicted, oddsWTvl.actual), 'tested, not kept'),
-    oddsTest('age-bucket peer rate', brierScore(odds5Bucket.predicted, odds5Bucket.actual), brierScore(oddsWBucket.predicted, oddsWBucket.actual), 'tested, not kept'),
-    oddsTest('category peer rate', brierScore(odds5Cat.predicted, odds5Cat.actual), brierScore(oddsWCat.predicted, oddsWCat.actual), 'tested, not kept'),
+    { term: 'Weibull forward odds, 24 mo', five_fold: oddsWeibFive, walk_forward: oddsWeibWalk, kept: true, note: 'kept — forward hazard' },
+    { term: 'logit on no-token age', five_fold: oddsAgeFive, walk_forward: oddsAgeWalk, kept: false, note: 'best cumulative Brier, wrong conditioning' },
+    { term: 'logit on age + ln TVL', five_fold: brierScore(odds5Tvl.predicted, odds5Tvl.actual), walk_forward: brierScore(oddsWTvl.predicted, oddsWTvl.actual), kept: false, note: 'tested, not kept' },
+    { term: 'age-bucket peer rate', five_fold: brierScore(odds5Bucket.predicted, odds5Bucket.actual), walk_forward: brierScore(oddsWBucket.predicted, oddsWBucket.actual), kept: false, note: 'tested, not kept' },
+    { term: 'category peer rate', five_fold: brierScore(odds5Cat.predicted, odds5Cat.actual), walk_forward: brierScore(oddsWCat.predicted, oddsWCat.actual), kept: false, note: 'tested, not kept' },
   ];
 
   const oddsOf = (p: SnapshotProtocol): number => {
     const a = ageYears(p.listed_at, asOf);
-    if (a === null) return baseRate;
-    return sigmoid(predict(oddsBeta, [1, a]));
+    // No listing date: the pool's average forward odds, not a guess at an age.
+    if (a === null) return meanForwardOdds;
+    return weibullForward(a, weib.k, weib.lambda);
   };
 
   // ---- candidates: every no-token protocol the house rule does not set aside
@@ -855,10 +974,14 @@ export function buildRadar(snapshot: Snapshot): RadarOutput {
     band90,
     flat_multiple: flatMultiple,
     range_honesty: rangeHonesty,
-    odds_a: oddsBeta[0]!,
-    odds_b: oddsBeta[1]!,
-    odds_five_fold: brierScore(odds5.predicted, odds5.actual),
-    odds_walk: brierScore(oddsW.predicted, oddsW.actual),
+    odds_k: weib.k,
+    odds_lambda: weib.lambda,
+    odds_horizon: ODDS_HORIZON_YEARS,
+    odds_unknown: meanForwardOdds,
+    odds_five_fold: oddsWeibFive,
+    odds_walk: oddsWeibWalk,
+    odds_logit_five_fold: oddsAgeFive,
+    odds_logit_walk: oddsAgeWalk,
     odds_base_five_fold: base5,
     odds_base_walk: baseW,
     value_terms: valueTerms,

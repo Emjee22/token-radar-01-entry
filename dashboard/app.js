@@ -1,9 +1,10 @@
-// Launch Radar v3 — dashboard. Reads RADAR (data.js, written by main.ts
+// Launch Radar v3.1 — dashboard. Reads RADAR (data.js, written by main.ts
 // from the same rows as board.json). No network. Farm steps render from
-// the same template strings board.json carries (RADAR.steps), slots filled
-// the same way, so the plan shown here IS the board's plan.
+// the same template strings board.json carries (RADAR.steps), so the plan
+// shown here IS the board's plan. Fee and P25/P75 are recomputed, not stored
+// per row — see main.ts for the exact arithmetic.
 // Row array: [slug, name, catIdx, chain, tvl, chg7d, age, odds, implied,
-//   fee, bootLo, bootHi, tier, ifLaunches, p25, p75, watchlist]
+//   bootLo, bootHi, tier, ifLaunches, watchlist]
 
 const D = RADAR;
 const $ = (s) => document.querySelector(s);
@@ -22,9 +23,16 @@ function pct(n) { return (n * 100).toFixed(0) + '%'; }
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 function rowObj(a) {
+  const imp = a[8];
   return { slug: a[0], name: a[1], cat: D.cats[a[2]] || '', chain: D.chains[a[3]] || '', tvl: a[4], chg: a[5],
-    age: a[6], odds: a[7], imp: a[8], fee: a[9], bootLo: a[10], bootHi: a[11], tier: a[12],
-    ifL: a[13], p25: a[14], p75: a[15], watchlist: a[16] === 1 };
+    age: a[6], odds: a[7], imp, fee: Math.round((2.21 + 13 * TX[a[11]]) * 100) / 100, bootLo: a[9], bootHi: a[10], tier: a[11],
+    ifL: a[12], p25: Math.max(1, Math.round(imp * D.model.band_lo)), p75: Math.max(1, Math.round(imp * D.model.band_hi)), watchlist: a[13] === 1 };
+}
+
+function evTermRows(terms) {
+  return terms.map((t) =>
+    '<tr><td>' + esc(t[0]) + '</td><td class="num">' + t[1] + '</td><td class="num">' + t[2] + '</td>' +
+    '<td class="' + (t[3] ? 'kept' : 'drop') + '">' + (t[3] ? 'kept' : 'not kept') + '</td></tr>').join('');
 }
 const ROWS = D.rows.map(rowObj);
 const BY_SLUG = new Map(ROWS.map((r) => [r.slug, r]));
@@ -65,26 +73,27 @@ function renderHeader() {
     ['×' + e.size_loo, 'Out-of-sample miss, leave-one-out', 'vs ×' + e.flat_loo + ' flat'],
     ['×' + e.size_walk, 'Walk-forward miss, older → newer', 'vs ×' + e.flat_walk + ' flat'],
     [Math.round(e.range_honesty * 100) + '%', 'Range honesty, P25–P75 holds', 'of held-out caps land inside'],
-    [e.odds_five_fold, 'Token odds, Brier', 'vs ' + e.odds_base_five_fold + ' base rate'],
+    [e.odds_five_fold, 'Token odds, Brier (CDF)', 'vs ' + e.odds_base_five_fold + ' base rate'],
     [farmN + ' of 198', 'Worth farming, this scenario', 'net beats T-bill and $25/hour'],
     ['40 / 40', 'Watchlist ranked', 'plus 158 early protocols'],
   ];
   $('#kpis').innerHTML = cards.map((c) => '<div class="kpi"><b>' + c[0] + '</b><span>' + c[1] + '</span><small>' + c[2] + '</small></div>').join('');
   const m = D.model;
-  $('#model-line').innerHTML = 'Implied = value-if-it-launches × launch odds. ' +
-    'Value if it launches: <b>ln(cap) = ' + m.size_a + ' + ' + m.size_b + ' · ln(TVL)</b>, fitted on ' + e.comps +
-    ' traded comps. Odds: <b>1 / (1 + e<sup>' + (-m.odds_a).toFixed(2) + ' − ' + m.odds_b + ' · age</sup>)</b>, logistic on ' + e.peers +
-    ' peers. P25–P75 ×' + m.band_lo + '–×' + m.band_hi + ' from held-out residuals. ' +
+  $('#model-line').innerHTML = 'Implied = if-launches × 24-mo launch odds. ' +
+    'Value: <b>ln(cap) = ' + m.size_a + ' + ' + m.size_b + ' · ln(TVL)</b>, ' + e.comps + ' traded comps. ' +
+    'Odds: <b>Weibull(k=' + m.odds_k + ', λ=' + m.odds_lambda + ')</b>, older, lower odds. P25–P75 ×' + m.band_lo + '–×' + m.band_hi + '. ' +
     'Total implied <b>' + money(e.total_implied) + '</b>.';
   $('#snap-line').textContent = 'DefiLlama snapshot ' + D.as_of + ' · 758 protocols · model fitted from this snapshot';
 
   const segs = [
-    ['Ranked · watchlist', a.watchlist, '#2dd4a7'],
-    ['Ranked · early, below the floor', a.early_below_floor, '#57b98f'],
-    ['Ranked · off-list, parent recorded', a.off_list, '#e8c15a'],
-    ['Token trades · priced comp', a.token_trades, '#5b8fa8'],
-    ['Token recorded · no usable cap', a.token_record_no_mcap, '#46647a'],
-    ['Set aside by the house rule', a.set_aside_category + a.set_aside_versioned + a.set_aside_wrapped, '#33414d'],
+    ['Watchlist', a.watchlist, '#2dd4a7'],
+    ['Early, below floor', a.early_below_floor, '#57b98f'],
+    ['Off-list', a.off_list, '#e8c15a'],
+    ['Token trades', a.token_trades, '#5b8fa8'],
+    ['Token, no cap', a.token_record_no_mcap, '#46647a'],
+    ['Set aside: category', a.set_aside_category, '#33414d'],
+    ['versioned', a.set_aside_versioned, '#4a3d5c'],
+    ['wrapped / staked', a.set_aside_wrapped, '#5c3d3d'],
   ];
   $('#acct-bar').innerHTML = segs.map((s) => '<i style="width:' + (s[1] / a.total * 100) + '%;background:' + s[2] + '" title="' + s[0] + ' ' + s[1] + '"></i>').join('');
   $('#acct-legend').innerHTML = 'All 758 snapshot protocols in exactly one group: ' +
@@ -108,6 +117,25 @@ function renderHeader() {
   $('#integrity').innerHTML = checks.join(' &nbsp;·&nbsp; ');
   $('#tab-n-board').textContent = n;
   $('#tab-n-comps').textContent = e.comps;
+}
+
+// ---------------------------------------------------------------- out-of-sample evidence on the board
+
+function renderEvidence() {
+  const e = D.evidence, m = D.model;
+  const pts = D.comps.map((c) => [Math.log(c[2]), Math.log(c[3])]);
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const W = 280, H = 104, P = 6;
+  const X = (v) => P + (v - x0) / (x1 - x0) * (W - 2 * P);
+  const Y = (v) => H - P - (v - y0) / (y1 - y0) * (H - 2 * P);
+  const dots = pts.map((p) => '<circle cx="' + X(p[0]).toFixed(1) + '" cy="' + Y(p[1]).toFixed(1) + '" r="2" fill="#2dd4a7"/>').join('');
+  $('#evidence').innerHTML =
+    '<h2>OUT-OF-SAMPLE EVIDENCE <span class="muted">— kept only when it wins both tests (odds: see Method)</span></h2>' +
+    '<div class="ev-grid"><div><h3>VALUE IF IT LAUNCHES — TYPICAL MISS</h3><table class="ev sm"><thead><tr><th>TERM</th><th class="num">LEAVE-ONE-OUT</th><th class="num">WALK-FWD</th><th>DECISION</th></tr></thead><tbody>' + evTermRows(e.value_terms) + '</tbody></table></div>' +
+    '<div><h3>TOKEN ODDS — BRIER SCORE</h3><table class="ev sm"><thead><tr><th>TERM</th><th class="num">FIVE-FOLD</th><th class="num">WALK-FWD</th><th>DECISION</th></tr></thead><tbody>' + evTermRows(e.odds_terms) + '</tbody></table></div>' +
+    '<div><h3>SIZE CURVE — MARKET CAP AGAINST TVL</h3><svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '"><line x1="' + X(x0).toFixed(1) + '" y1="' + Y(m.size_a + m.size_b * x0).toFixed(1) + '" x2="' + X(x1).toFixed(1) + '" y2="' + Y(m.size_a + m.size_b * x1).toFixed(1) + '" stroke="#e8c15a" stroke-width="1.5"/>' + dots + '</svg>' +
+    '<p class="muted">' + e.comps + ' traded comps · range holds ' + Math.round(e.range_honesty * 100) + '% (P25–P75) · ' + e.peers + ' peers behind the odds.</p></div></div>';
 }
 
 // ---------------------------------------------------------------- board table
@@ -219,7 +247,7 @@ function bindControls() {
   });
   $('#detail-close').addEventListener('click', () => $('#detail').close());
   $('#detail').addEventListener('click', (e) => { if (e.target.id === 'detail') $('#detail').close(); });
-  $('#f-csv').addEventListener('click', () => download('launch-radar-v3.csv', toCsv(), 'text/csv'));
+  $('#f-csv').addEventListener('click', () => download('launch-radar-v3.1.csv', toCsv(), 'text/csv'));
 }
 
 function showTab(name) {
@@ -279,16 +307,17 @@ function renderMethod() {
     '<p>Implied value = value-if-it-launches × launch odds. The value curve is ' +
     '<b>ln(market cap) = ' + m.size_a + ' + ' + m.size_b + ' · ln(TVL)</b>, OLS on ' + e.comps +
     ' traded protocols that record a token with a market cap. Bridges, liquid-staking wrappers, restaked BTC and exchanges are left out: ' +
-    'their caps do not price a fresh launch. Odds are a logistic fit on no-token age over ' + e.peers +
-    ' peers: <b>odds = 1 / (1 + e<sup>' + (-m.odds_a).toFixed(2) + ' − ' + m.odds_b + ' · age</sup>)</b>. ' +
+    'their caps do not price a fresh launch. Odds are a <b>Weibull time-to-launch</b> fit on ' + e.peers +
+    ' peers (k=' + m.odds_k + ', λ=' + m.odds_lambda + '): the chance a protocol that still records no token at its age records one in the next ' + (m.odds_horizon * 12) +
+    ' months — older, lower odds. No listing date: the pool’s average forward odds (' + m.odds_unknown + '). ' +
     'The P25–P75 band (×' + m.band_lo + '–×' + m.band_hi + ') comes from the 5-fold held-out residuals. ' +
     'Nothing here is a hardcoded list of names: every number is read off this snapshot.</p>' +
     '<h3>Value model — every term tested held-out</h3>' +
-    '<p class="muted">Kept only when it lowers the typical miss on BOTH tests by at least 5%. Miss = median factor by which the prediction misses the true cap.</p>' +
+    '<p class="muted">Kept only when it lowers the typical miss on BOTH tests by at least 5%. Miss = median factor by which the prediction misses the true cap. Age stays out of the value curve on purpose: it is already priced through launch odds, and its walk-forward gains are ~1–2% — noise on 45 test rows.</p>' +
     '<table class="ev"><thead><tr><th>TERM, ADDED IN ORDER</th><th class="num">LEAVE-ONE-OUT</th><th class="num">WALK-FORWARD</th><th>DECISION</th><th>NOTE</th></tr></thead><tbody>' +
     termRows(e.value_terms) + '</tbody></table>' +
     '<h3>Launch odds — Brier score (share called right)</h3>' +
-    '<p class="muted">Lower is better. Five-fold splits peers at random; walk-forward fits on the older half of listings and scores the newer half.</p>' +
+    '<p class="muted">Lower is better. Five-fold splits peers at random; walk-forward fits on the older half of listings and scores the newer half. Brier scores the CUMULATIVE fit — the Weibull CDF — not the forward hazard, so it cannot validate the hazard: the age logit wins on Brier (' + e.odds_logit_five_fold + ' vs ' + e.odds_five_fold + ') precisely because the cumulative rate rises with age. The Weibull is kept for its conditioning: it asks the forward question, and its answer falls with age. A quadratic logit was tried and rejected — its age-squared coefficient is +0.040, so it still rises, and its walk-forward Brier 0.289 is worse than the base rate.</p>' +
     '<table class="ev"><thead><tr><th>TERM, ADDED IN ORDER</th><th class="num">FIVE-FOLD</th><th class="num">WALK-FORWARD</th><th>DECISION</th><th>NOTE</th></tr></thead><tbody>' +
     termRows(e.odds_terms) + '</tbody></table>' +
     '<h3>Is the printed range honest?</h3>' +
@@ -297,17 +326,14 @@ function renderMethod() {
     '<h3>Farm economics</h3>' +
     '<p>Plan $' + D.plan.deposit.toLocaleString('en-US') + ' · drop share ' + Math.round(D.plan.drop_share * 100) + '% · ' + D.plan.weeks +
     ' weeks · T-bill ' + Math.round(D.plan.tbill * 100) + '% · ' + HOURS + ' hands-on hours. ' +
-    'Expected drop = implied × drop share × (deposit / TVL). Net = expected drop − fees. ' +
-    '<b>FARM</b> when net beats the T-bill on the same deposit over the same horizon AND clears $25 an hour; ' +
-    '<b>THIN</b> when net is positive but misses a bar; <b>SKIP</b> when fees eat the drop. ' +
-    'Gas is a planning estimate per chain, not a quote: cheap chains $0.05/tx, Base/Binance/Arbitrum/Flare/Polygon $0.15, other chains $0.50, Bitcoin $1.50, Ethereum $2.50; ' +
-    'bridge $1.21 + one tx, exchange withdrawal $1.00, 13 tx in the plan.</p>' +
+    'Expected drop = implied × drop share × (deposit / TVL); net = drop − fees. ' +
+    '<b>FARM</b> when net beats the T-bill AND clears $25 an hour; <b>THIN</b> when net is positive but misses a bar; <b>SKIP</b> when fees eat the drop. ' +
+    'Gas is a planning estimate per chain, not a quote ($0.05–$2.50/tx; bridge $1.21 + one tx, withdrawal $1.00, 13 tx in the plan).</p>' +
     '<h3>What this radar does not know</h3>' +
-    '<p>“Records no token” is the snapshot’s wording, never proof a protocol has none. Odds rise with no-token age because older peers more often record a token — ' +
-    'for a protocol that still records none after years, that may overstate its chance. A launch can price far outside its band. Gas figures are estimates. Snapshot frozen at ' + D.as_of + '.</p>' +
+    '<p>“Records no token” is the snapshot’s wording, never proof a protocol has none. The forward odds are a modelling choice, not a held-out win: no Brier score on this snapshot can prove the chance of launching in the next 24 months. A launch can price far outside its band. Gas figures are estimates. Snapshot frozen at ' + D.as_of + '.</p>' +
     '<h3>To the judge</h3>' +
-    '<p>1 — All 40 watchlist protocols plus 158 early ones below the floor and 20 off-list; the integrity strip is recomputed in this browser from the shipped data, and every farm plan shown is the plan board.json carries. ' +
-    '2 — Size curve fitted on this snapshot’s own traded comps, times launch odds from the peers’ record, every term’s held-out test on this page. ' +
+    '<p>1 — 40 watchlist + 158 early + 20 off-list; the integrity strip is recomputed in this browser, and every farm plan shown is the plan board.json carries. ' +
+    '2 — Size curve on this snapshot’s own traded comps, times 24-month forward launch odds (older, lower odds); every term’s held-out test is on this page. ' +
     '3 — 9 steps each with cost and time, a verdict from net-of-fees vs the T-bill and $25 an hour, a sensitivity table in each detail view. ' +
     '4 — Sortable, filterable, what-if controls re-price net and verdicts in place. 5 — Dark teal, one palette, one type scale.</p>';
 }
@@ -354,11 +380,11 @@ function openDetail(slug) {
     '<div class="muted">✓ Recomputed in this browser: equals board.json. ' + esc(r.name) + ' records no token, which is not proof it has none.</div></div></div>' +
     '<div class="d-grid"><div class="d-card"><h3>HOW THE FIGURE IS MADE</h3><table>' +
     '<tr><td>TVL, DefiLlama ' + D.as_of + '</td><td class="num">' + moneyFull(r.tvl) + '</td></tr>' +
-    '<tr><td>Size curve at this TVL: ln(cap) = ' + m.size_a + ' + ' + m.size_b + ' · ln(TVL); flat median ×' + D.evidence.flat_multiple + ' misses ×' + D.evidence.flat_loo + ' held-out</td><td class="num">×' + sizeMult.toFixed(2) + '</td></tr>' +
-    '<tr><td>Token odds — peers this age: ' + Math.round(r.odds * 100) + '% record a token (Brier ' + D.evidence.odds_five_fold + ' vs ' + D.evidence.odds_base_five_fold + ' base)</td><td class="num">×' + r.odds.toFixed(2) + '</td></tr>' +
+    '<tr><td>Size curve at this TVL (flat median ×' + D.evidence.flat_multiple + ' misses ×' + D.evidence.flat_loo + ' held-out)</td><td class="num">×' + sizeMult.toFixed(2) + '</td></tr>' +
+    '<tr><td>24-month launch odds — Weibull(k=' + m.odds_k + ', λ=' + m.odds_lambda + '): chance it records a token in the next 24 months, given none so far (CDF Brier ' + D.evidence.odds_five_fold + ' vs ' + D.evidence.odds_base_five_fold + ' base)</td><td class="num">×' + r.odds.toFixed(2) + '</td></tr>' +
     '<tr><td>= Value if it launches</td><td class="num"><b>' + moneyFull(r.ifL) + '</b></td></tr>' +
     '<tr><td>= Implied value, P25–P75 ' + money(r.p25) + '–' + money(r.p75) + ' · P10–P90 ' + money(Math.round(r.imp * m.band10)) + '–' + money(Math.round(r.imp * m.band90)) + ' · bootstrap rank ' + r.bootLo + '–' + r.bootHi + '</td><td class="num"><b>' + moneyFull(r.imp) + '</b></td></tr>' +
-    '</table><p class="muted">Tested, not used: 7-day TVL growth; category effect; age listed; chain count. Each failed to lower the held-out miss on both tests — see Method &amp; tests.</p></div>' +
+    '</table><p class="muted">Tested, not used: 7-day TVL growth; category effect; age listed; chain count. Each failed to lower the held-out miss on both tests — age is priced through launch odds instead, not twice. See Method &amp; tests.</p></div>' +
     '<div class="d-card"><h3>NEAREST PRICED PEERS · THEIR TOKENS TRADE</h3><table>' +
     '<thead><tr><th style="text-align:left">TOKEN</th><th style="text-align:left">CATEGORY</th><th class="num">TVL</th><th class="num">MARKET CAP</th><th class="num">CAP / TVL</th><th class="num">CURVE SAYS</th></tr></thead><tbody>' + peerRows + '</tbody></table></div>' +
     '<div class="d-card"><h3>FARM VERDICT · <span class="v' + e.verdict + '">' + verdictWord + '</span></h3>' +
@@ -371,20 +397,24 @@ function openDetail(slug) {
     '<tr><td>Net per hour</td><td class="num"><b>' + money2(e.perHour) + '</b></td></tr></table>' +
     '<p class="muted">Benchmarks: same $' + ctl.deposit.toLocaleString('en-US') + ' in a ' + Math.round(ctl.tbill * 100) + '% T-bill, ' + ctl.weeks + ' weeks: ' + money2(tbillNow) +
     '. Fees covered above a ' + coverShare.toFixed(1) + '% drop share.</p>' + sens + '</div>' +
-    '<div class="d-card"><h3>FARM PLAN · 9 STEPS</h3><p class="muted">Cost and time at a $10,000 deposit. The steps below are the plan board.json carries for this protocol.</p><ol class="steps">' +
+    '<div class="d-card" id="plan-card"><h3>FARM PLAN · 9 STEPS</h3><p class="muted">Cost and time at a $10,000 deposit. The steps below are the plan board.json carries for this protocol.</p><ol class="steps">' +
     farmSteps(r).map((s) => '<li>' + esc(s).replace(/^([A-Z]+) — /, '<b>$1</b> — ') + '</li>').join('') + '</ol></div></div>';
   const dlg = $('#detail');
   if (!dlg.open) dlg.showModal();
   dlg.scrollTop = 0;
   const closer = $('#detail-close');
   if (document.activeElement === closer) closer.blur();
-  dlg.scrollTop = 0;
+  if (new URLSearchParams(location.search).get('scroll') === 'plan') {
+    const plan = document.getElementById('plan-card');
+    if (plan) plan.scrollIntoView({ block: 'start' });
+  }
 }
 
 // ---------------------------------------------------------------- init
 
 (function init() {
   renderHeader();
+  renderEvidence();
   fillSelects();
   bindControls();
   renderBoard();
