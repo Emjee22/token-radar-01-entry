@@ -710,12 +710,16 @@ export function buildRadar(snapshot: Snapshot): RadarOutput {
     term: label,
     five_fold: five,
     walk_forward: walk,
-    kept: five < base5 * 0.95 && walk < baseW * 0.95,
+    // Kept only when it beats the chosen odds model (logit on age) on BOTH
+    // tests by at least 5% — the same bar the value terms are held to.
+    kept: five < oddsAgeFive * 0.95 && walk < oddsAgeWalk * 0.95,
     note,
   });
+  const oddsAgeFive = brierScore(odds5.predicted, odds5.actual);
+  const oddsAgeWalk = brierScore(oddsW.predicted, oddsW.actual);
   const oddsTerms: OddsTest[] = [
     { term: 'base rate of peers', five_fold: base5, walk_forward: baseW, kept: false, note: 'baseline' },
-    oddsTest('logit on no-token age', brierScore(odds5.predicted, odds5.actual), brierScore(oddsW.predicted, oddsW.actual), 'kept'),
+    { term: 'logit on no-token age', five_fold: oddsAgeFive, walk_forward: oddsAgeWalk, kept: true, note: 'kept' },
     oddsTest('logit on age + ln TVL', brierScore(odds5Tvl.predicted, odds5Tvl.actual), brierScore(oddsWTvl.predicted, oddsWTvl.actual), 'tested, not kept'),
     oddsTest('age-bucket peer rate', brierScore(odds5Bucket.predicted, odds5Bucket.actual), brierScore(oddsWBucket.predicted, oddsWBucket.actual), 'tested, not kept'),
     oddsTest('category peer rate', brierScore(odds5Cat.predicted, odds5Cat.actual), brierScore(oddsWCat.predicted, oddsWCat.actual), 'tested, not kept'),
