@@ -81,7 +81,7 @@ function renderHeader() {
   const m = D.model;
   $('#model-line').innerHTML = 'Implied = if-launches × 24-mo launch odds. ' +
     'Value: <b>ln(cap) = ' + m.size_a + ' + ' + m.size_b + ' · ln(TVL)</b>, ' + e.comps + ' traded comps. ' +
-    'Odds: <b>Weibull(k=' + m.odds_k + ', λ=' + m.odds_lambda + ')</b>, older, lower odds. P25–P75 ×' + m.band_lo + '–×' + m.band_hi + '. ' +
+    'Odds: <b>Weibull(k=' + m.odds_k + ', λ=' + m.odds_lambda + ')</b>, older, lower odds. P25–P75 ×' + m.band_lo.toFixed(3) + '–×' + m.band_hi.toFixed(3) + '. ' +
     'Total implied <b>' + money(e.total_implied) + '</b>.';
   $('#snap-line').textContent = 'DefiLlama snapshot ' + D.as_of + ' · 758 protocols · model fitted from this snapshot';
 
@@ -310,7 +310,7 @@ function renderMethod() {
     'their caps do not price a fresh launch. Odds are a <b>Weibull time-to-launch</b> fit on ' + e.peers +
     ' peers (k=' + m.odds_k + ', λ=' + m.odds_lambda + '): the chance a protocol that still records no token at its age records one in the next ' + (m.odds_horizon * 12) +
     ' months — older, lower odds. No listing date: the pool’s average forward odds (' + m.odds_unknown + '). ' +
-    'The P25–P75 band (×' + m.band_lo + '–×' + m.band_hi + ') comes from the 5-fold held-out residuals. ' +
+    'The P25–P75 band (×' + m.band_lo.toFixed(3) + '–×' + m.band_hi.toFixed(3) + ') comes from the 5-fold held-out residuals. ' +
     'Nothing here is a hardcoded list of names: every number is read off this snapshot.</p>' +
     '<h3>Value model — every term tested held-out</h3>' +
     '<p class="muted">Kept only when it lowers the typical miss on BOTH tests by at least 5%. Miss = median factor by which the prediction misses the true cap. Age stays out of the value curve on purpose: it is already priced through launch odds, and its walk-forward gains are ~1–2% — noise on 45 test rows.</p>' +
