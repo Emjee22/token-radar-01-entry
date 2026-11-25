@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-board.ts';
 import { FARM_STEP_TEMPLATES, TIER_TX_USD, buildRadar } from './lib/model.ts';
 import type { RadarOutput } from './lib/model.ts';
@@ -34,7 +35,7 @@ function main(): void {
     inputPath = existsSync(fallback) ? fallback : '/input/snapshot.json';
   }
   const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? 'out';
-  const root = process.cwd();
+  const root = fileURLToPath(new URL('.', import.meta.url));
 
   const snapshot = JSON.parse(readFileSync(inputPath, 'utf8'));
   const radar: RadarOutput = buildRadar(snapshot);
